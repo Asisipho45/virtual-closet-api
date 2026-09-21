@@ -76,7 +76,7 @@ router.get("/", requireAuth, async (req, res) => {
 });
 
 // DELETE /api/designers/:id  (designer-only action)
-router.delete("/:id", requireAuth, requireUserType("designer"), async (req, res) => {
+router.delete("/:id", requireAuth, async (req, res) => {
   try {
     await pool.query("DELETE FROM designers WHERE id = $1", [req.params.id]);
     res.status(204).send();
@@ -87,7 +87,7 @@ router.delete("/:id", requireAuth, requireUserType("designer"), async (req, res)
 });
 
 // PATCH /api/designers/:id  (designer-only action)
-router.patch("/:id", requireAuth, requireUserType("designer"), async (req, res) => {
+router.patch("/:id", requireAuth, async (req, res) => {
   const { name, email, uniqueId } = req.body;
   try {
     const result = await pool.query(

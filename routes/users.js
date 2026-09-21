@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { pool } from "../db/pool.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, requireUserType } from "../middleware/auth.js";
 
 const router = Router();
 
@@ -12,6 +12,24 @@ router.get("/", requireAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Couldn't fetch users." });
+  }
+});
+
+// GET /api/users/me  (your own full profile, including avatar)
+router.get("/me", requireAuth, requireUserType("user"), async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT id, username, email, avatar_path FROM users WHERE id = $1",
+      [req.user.id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "User not found." });
+    }
+    const row = result.rows[0];
+    res.json({ id: row.id, username: row.username, email: row.email, avatarPath: row.avatar_path });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Couldn't fetch your profile." });
   }
 });
 
@@ -35,6 +53,27 @@ router.patch("/me", requireAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Couldn't update username." });
+  }
+});
+
+// PATCH /api/users/me/avatar  (save/replace your photo)
+router.patch("/me/avatar", requireAuth, requireUserType("user"), async (req, res) => {
+  const { avatarPath } = req.body;
+
+  if (!avatarPath || !avatarPath.startsWith("data:image/")) {
+    return res.status(400).json({ error: "A valid photo is required." });
+  }
+
+  try {
+    const result = await pool.query(
+      "UPDATE users SET avatar_path = $1 WHERE id = $2 RETURNING id, username, email, avatar_path",
+      [avatarPath, req.user.id]
+    );
+    const row = result.rows[0];
+    res.json({ id: row.id, username: row.username, email: row.email, avatarPath: row.avatar_path });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Couldn't save your photo." });
   }
 });
 

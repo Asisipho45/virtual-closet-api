@@ -1,0 +1,70 @@
+import { Router } from "express";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { pool } from "../db/pool.js";
+import { requireAuth, requireUserType } from "../middleware/auth.js";
+
+const router = Router();
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+// POST /api/outfits/recommend
+router.post("/recommend", requireAuth, requireUserType("user"), async (req, res) => {
+  const { temperature, conditions } = req.body;
+
+  if (temperature === undefined || !conditions) {
+    return res.status(400).json({ error: "Temperature and conditions are required." });
+  }
+
+  try {
+    const itemsResult = await pool.query(
+      "SELECT id, color, category FROM clothing_items WHERE user_id = $1",
+      [req.user.id]
+    );
+    const closetItems = itemsResult.rows;
+
+    if (closetItems.length < 2) {
+      return res
+        .status(400)
+        .json({ error: "Add at least 2 items to your closet to get outfit recommendations." });
+    }
+
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+
+    const prompt = `The current weather is ${temperature}°C, ${conditions}. Here is a JSON list of clothing items available in a person's closet: ${JSON.stringify(
+      closetItems
+    )}. Recommend exactly 3 outfits appropriate for this weather, each made of 2 to 4 items chosen ONLY from the ids in the list above (do not invent items). Respond with ONLY a JSON array, no other text, in this exact shape:
+[{"name": "<short outfit name, e.g. Casual Layered Look>", "reason": "<one short sentence on why it suits this weather>", "itemIds": [<id>, <id>]}, ...]`;
+
+    const result = await model.generateContent(prompt);
+    const text = result.response.text().trim();
+    const jsonMatch = text.match(/\[[\s\S]*\]/);
+
+    if (!jsonMatch) {
+      return res.status(502).json({ error: "Couldn't understand the AI's recommendations." });
+    }
+
+    const recommendations = JSON.parse(jsonMatch[0]);
+    const itemsById = Object.fromEntries(closetItems.map((i) => [i.id, i]));
+
+    const outfits = recommendations
+      .map((rec, index) => ({
+        id: `outfit-${index}`,
+        name: rec.name || `Outfit ${index + 1}`,
+        reason: rec.reason || "",
+        items: (rec.itemIds || [])
+          .map((id) => itemsById[id])
+          .filter(Boolean),
+      }))
+      .filter((outfit) => outfit.items.length > 0);
+
+    if (outfits.length === 0) {
+      return res.status(502).json({ error: "The AI couldn't build any valid outfits. Try again." });
+    }
+
+    res.json({ outfits });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Couldn't generate outfit recommendations." });
+  }
+});
+
+export default router;
